@@ -284,9 +284,10 @@ async function handlePromptMessage(message, rawPrompt) {
   }
 }
 
-async function startDiscordListener() {
+async function startDiscordListener(options = {}) {
   const { token, allowedChannelIds, promptPrefix } = getDiscordBotConfig();
   const rateLimitConfig = getRateLimitConfig();
+  const skipSqlConnect = Boolean(options.skipSqlConnect);
   const expectedBotId = String(
     process.env.APPLICATION_ID || process.env.DISCORD_APPLICATION_ID || ""
   ).trim();
@@ -299,7 +300,9 @@ async function startDiscordListener() {
     console.warn("No AllowedChannelIDs configured. Listener will ignore all channels.");
   }
 
-  await connectSQL();
+  if (!skipSqlConnect) {
+    await connectSQL();
+  }
 
   const client = new Client({
     intents: [
