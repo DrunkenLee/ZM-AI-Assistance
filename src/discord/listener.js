@@ -21,6 +21,11 @@ function parseInteger(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseBoolean(value, fallback = false) {
+  if (typeof value !== "string") return fallback;
+  return ["true", "1", "yes", "on"].includes(value.toLowerCase());
+}
+
 function parseAllowedChannelIds(rawValue) {
   return new Set(
     String(rawValue || "")
@@ -44,6 +49,10 @@ function getRateLimitConfig() {
     0,
     parseInteger(process.env.DISCORD_DAILY_PROMPT_LIMIT, DEFAULT_DAILY_PROMPT_LIMIT)
   );
+  const adminBypassEnabled = parseBoolean(
+    process.env.DISCORD_ADMIN_BYPASS_ENABLED,
+    true
+  );
 
   const adminRoleNames = new Set(
     [...parseCsvSet(process.env.DISCORD_ADMIN_ROLE_NAMES || "admin")].map((value) =>
@@ -55,6 +64,7 @@ function getRateLimitConfig() {
 
   return {
     defaultDailyLimit,
+    adminBypassEnabled,
     adminRoleNames,
     adminRoleIds,
   };
@@ -90,6 +100,15 @@ function getNextUtcResetIso() {
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0)
   );
   return nextReset.toISOString();
+}
+
+function isPromptLimitSchemaError(error) {
+  const message = String(error?.message || "").toLowerCase();
+
+  return (
+    message.includes('relation "discord_prompt_daily_limits" does not exist') ||
+    message.includes("no unique or exclusion constraint matching the on conflict")
+  );
 }
 
 async function consumeDailyPromptQuota(discordUserId, rateLimitConfig) {
@@ -177,7 +196,7 @@ async function consumeDailyPromptQuota(discordUserId, rateLimitConfig) {
 }
 
 async function enforcePromptLimit(message, rateLimitConfig) {
-  if (isAdminBypassUser(message, rateLimitConfig)) {
+  if (rateLimitConfig.adminBypassEnabled && isAdminBypassUser(message, rateLimitConfig)) {
     return {
       allowed: true,
       bypassed: true,
@@ -193,7 +212,28 @@ async function enforcePromptLimit(message, rateLimitConfig) {
     };
   }
 
-  const quotaResult = await consumeDailyPromptQuota(discordUserId, rateLimitConfig);
+  let quotaResult;
+  try {
+    quotaResult = await consumeDailyPromptQuota(discordUserId, rateLimitConfig);
+  } catch (error) {
+    if (isPromptLimitSchemaError(error)) {
+      console.error(
+        "Discord prompt quota storage is not ready.",
+        error
+      );
+
+      return {
+        allowed: true,
+        bypassed: false,
+        usedCount: 0,
+        dailyLimit: rateLimitConfig.defaultDailyLimit,
+        rateLimitUnavailable: true,
+      };
+    }
+
+    throw error;
+  }
+
   return {
     ...quotaResult,
     bypassed: false,
@@ -333,6 +373,9 @@ async function startDiscordListener(options = {}) {
     console.log(`Allowed channels: ${Array.from(allowedChannelIds).join(", ") || "none"}`);
     console.log(
       `Daily prompt limit (non-admin): ${rateLimitConfig.defaultDailyLimit} request(s) per UTC day`
+    );
+    console.log(
+      `Admin bypass for prompt limit: ${rateLimitConfig.adminBypassEnabled ? "enabled" : "disabled"}`
     );
   });
 
