@@ -230,6 +230,67 @@ function buildJessicaCasualGreeting() {
   ].join(" ");
 }
 
+function pickRandom(items, fallback = "") {
+  if (!Array.isArray(items) || items.length === 0) return fallback;
+  return items[Math.floor(Math.random() * items.length)] || fallback;
+}
+
+function buildJessicaPersonaErrorMessage(topic, extraLine = "") {
+  const openers = [
+    "Jessica here. I hit a small snag while processing that.",
+    "Hey, Jessica here. I ran into a quick blocker.",
+    "Aku Jessica, barusan ada kendala kecil waktu proses request kamu.",
+    "Jessica checking in, I could not finish that step cleanly just now.",
+  ];
+
+  const topicHints = {
+    live_status: [
+      "I could not complete the live server status check right now.",
+      "Live status verification is temporarily unavailable on my side.",
+      "Aku belum bisa selesaikan pengecekan status server sekarang.",
+    ],
+    flea_lookup: [
+      "I could not finish the flea market user lookup at the moment.",
+      "Database lookup for flea user data is not responding cleanly right now.",
+      "Pengecekan database user flea belum berhasil untuk saat ini.",
+    ],
+    no_evidence: [
+      "I could not find enough trusted evidence for that request.",
+      "I am missing solid source evidence for that exact question.",
+      "Aku belum nemu evidence yang cukup kuat untuk pertanyaan itu.",
+    ],
+    empty_completion: [
+      "The model returned no final answer text.",
+      "I received an empty final response from the model.",
+      "Model-nya tidak mengembalikan jawaban final kali ini.",
+    ],
+    default: [
+      "I could not complete that step cleanly right now.",
+      "That request did not finish properly this time.",
+      "Permintaan ini belum berhasil selesai untuk saat ini.",
+    ],
+  };
+
+  const retryLines = [
+    "Please retry in a moment and I will continue from there.",
+    "Please try again shortly and I will re-check it for you.",
+    "Coba ulang sebentar lagi, nanti aku bantu cek lagi ya.",
+    "Retry once more in a bit, I will handle it step-by-step.",
+  ];
+
+  const chosenTopic = pickRandom(topicHints[topic] || topicHints.default);
+  const chosenExtra = String(extraLine || "").trim();
+
+  return [
+    pickRandom(openers),
+    chosenTopic,
+    chosenExtra,
+    pickRandom(retryLines),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function isLoginTroubleshootIntent(prompt) {
   const normalized = String(prompt || "").toLowerCase();
   return LOGIN_TROUBLE_KEYWORDS.some((keyword) => normalized.includes(keyword));
@@ -271,9 +332,6 @@ function isReasoningOnlyCompletion(completion, content) {
 }
 
 function buildGroundedFallbackMessage(prompt, grounding, completion) {
-  if (!isZonaMerahRelated(prompt)) {
-    return "I could not generate a casual response this time. Please retry with a shorter prompt.";
-  }
 
   if (isLoginTroubleshootIntent(prompt)) {
     return buildLoginTroubleshootMessage(null);
@@ -288,13 +346,16 @@ function buildGroundedFallbackMessage(prompt, grounding, completion) {
       : "No source snippets were available.";
   const spentAllReasoning = isReasoningOnlyCompletion(completion, "");
 
-  return [
-    spentAllReasoning
-      ? "The model used its completion budget for internal reasoning and returned no final text."
-      : "The model returned an empty message.",
-    sourceLine,
-    "Please retry with a narrower question, for example: 'step-by-step fix for whitelist/login failed'.",
-  ].join(" ");
+  return buildJessicaPersonaErrorMessage(
+    "empty_completion",
+    [
+      spentAllReasoning
+        ? "I have spent completion budget on reasoning without getting final output."
+        : "No final message text was produced.",
+      sourceLine,
+      "Try a narrower request like: step-by-step fix for whitelist/login failed.",
+    ].join(" ")
+  );
 }
 
 function getClient() {
@@ -382,8 +443,7 @@ async function createChatCompletion(prompt, options = {}) {
         },
       };
     } catch (_error) {
-      const failMessage =
-        "I could not run a live server status check right now. Please try again in a moment.";
+      const failMessage = buildJessicaPersonaErrorMessage("live_status");
 
       await AiRequestLog.create({
         prompt: normalizedPrompt,
@@ -429,8 +489,7 @@ async function createChatCompletion(prompt, options = {}) {
         };
       }
     } catch (_error) {
-      const failMessage =
-        "I could not complete the flea market user database lookup right now. Please retry shortly.";
+      const failMessage = buildJessicaPersonaErrorMessage("flea_lookup");
 
       await AiRequestLog.create({
         prompt: normalizedPrompt,
@@ -560,8 +619,10 @@ async function createChatCompletion(prompt, options = {}) {
     }
 
     if (grounding.enabled && grounding.sources.length === 0) {
-      const noEvidenceMessage =
-        "I could not find relevant evidence in SKILL.md or trusted internet sources for that question. Please rephrase with clearer Zona Merah or Project Zomboid details.";
+      const noEvidenceMessage = buildJessicaPersonaErrorMessage(
+        "no_evidence",
+        "I checked SKILL.md and trusted internet sources but found no strong match. Please rephrase with clearer Zona Merah or Project Zomboid details."
+      );
 
       await AiRequestLog.create({
         prompt: normalizedPrompt,

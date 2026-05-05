@@ -102,6 +102,39 @@ function getNextUtcResetIso() {
   return nextReset.toISOString();
 }
 
+function pickRandom(items, fallback = "") {
+  if (!Array.isArray(items) || items.length === 0) return fallback;
+  return items[Math.floor(Math.random() * items.length)] || fallback;
+}
+
+function buildJessicaNoResponseMessage() {
+  const variants = [
+    "Jessica here, I did not get a usable response this round. Please send the prompt again.",
+    "I am Jessica. The model returned empty content just now, please retry once.",
+    "Aku Jessica, balasan dari model kosong barusan. Coba kirim prompt lagi ya.",
+  ];
+  return pickRandom(variants, "Jessica here, no response was generated. Please retry.");
+}
+
+function buildJessicaPromptFailureMessage() {
+  const variants = [
+    "Jessica here, I hit a temporary issue while processing your prompt. Please try again in a moment.",
+    "Sorry, I am Jessica and this request failed on my side for now. Retry in a bit and I will handle it.",
+    "Aku Jessica, ada kendala sementara waktu proses prompt kamu. Coba lagi sebentar ya.",
+  ];
+  return pickRandom(variants, "Jessica here, I could not process that prompt right now. Please retry.");
+}
+
+function buildJessicaDisallowedChannelMessage(allowedChannelIds) {
+  const allowed = Array.from(allowedChannelIds).join(", ") || "none";
+  const variants = [
+    `Jessica here, AI prompts are not enabled in this channel yet. Allowed channel IDs: ${allowed}.`,
+    `This is Jessica. Wrong channel for AI prompt right now. Please use one of: ${allowed}.`,
+    `Aku Jessica, channel ini belum aktif untuk AI prompt. Pakai channel ID ini ya: ${allowed}.`,
+  ];
+  return pickRandom(variants, `Jessica here, AI prompts are disabled in this channel. Allowed channel IDs: ${allowed}.`);
+}
+
 function isPromptLimitSchemaError(error) {
   const message = String(error?.message || "").toLowerCase();
 
@@ -119,7 +152,7 @@ async function consumeDailyPromptQuota(discordUserId, rateLimitConfig) {
       `
         INSERT INTO discord_prompt_daily_limits (
           discord_user_id,
-          current_date,
+          "current_date",
           used_count,
           daily_limit,
           created_at,
@@ -138,8 +171,8 @@ async function consumeDailyPromptQuota(discordUserId, rateLimitConfig) {
       `
         UPDATE discord_prompt_daily_limits
         SET
-          used_count = CASE WHEN current_date = CURRENT_DATE THEN used_count ELSE 0 END,
-          current_date = CURRENT_DATE,
+          used_count = CASE WHEN "current_date" = CURRENT_DATE THEN used_count ELSE 0 END,
+          "current_date" = CURRENT_DATE,
           updated_at = NOW()
         WHERE discord_user_id = :discordUserId
         RETURNING used_count, daily_limit
@@ -279,11 +312,18 @@ function getDiscordBotConfig() {
 
   const allowedChannelIds = parseAllowedChannelIds(allowedRaw);
   const promptPrefix = String(process.env.DISCORD_AI_PROMPT_PREFIX || DEFAULT_PREFIX).trim() || DEFAULT_PREFIX;
+  const notifyDisallowedChannel = parseBoolean(
+    process.env.DISCORD_NOTIFY_DISALLOWED_CHANNEL,
+    true
+  );
+  const logIgnoredPrompts = parseBoolean(process.env.DISCORD_LOG_IGNORED_PROMPTS, true);
 
   return {
     token,
     allowedChannelIds,
     promptPrefix,
+    notifyDisallowedChannel,
+    logIgnoredPrompts,
   };
 }
 
@@ -296,12 +336,12 @@ async function handlePromptMessage(message, rawPrompt) {
     userId: `discord-${message.author.id}`,
   });
 
-  const responseText = String(result?.content || "").trim() || "No response generated.";
+  const responseText = String(result?.content || "").trim() || buildJessicaNoResponseMessage();
   const chunks = splitMessage(responseText);
 
   if (chunks.length === 0) {
     await message.reply({
-      content: "No response generated.",
+      content: buildJessicaNoResponseMessage(),
       allowedMentions: { parse: [] },
     });
     return;
@@ -325,7 +365,8 @@ async function handlePromptMessage(message, rawPrompt) {
 }
 
 async function startDiscordListener(options = {}) {
-  const { token, allowedChannelIds, promptPrefix } = getDiscordBotConfig();
+  const { token, allowedChannelIds, promptPrefix, notifyDisallowedChannel, logIgnoredPrompts } =
+    getDiscordBotConfig();
   const rateLimitConfig = getRateLimitConfig();
   const skipSqlConnect = Boolean(options.skipSqlConnect);
   const expectedBotId = String(
@@ -372,6 +413,10 @@ async function startDiscordListener(options = {}) {
     console.log(`Prompt prefix: ${promptPrefix}`);
     console.log(`Allowed channels: ${Array.from(allowedChannelIds).join(", ") || "none"}`);
     console.log(
+      `Notify disallowed channel usage: ${notifyDisallowedChannel ? "enabled" : "disabled"}`
+    );
+    console.log(`Log ignored prompts: ${logIgnoredPrompts ? "enabled" : "disabled"}`);
+    console.log(
       `Daily prompt limit (non-admin): ${rateLimitConfig.defaultDailyLimit} request(s) per UTC day`
     );
     console.log(
@@ -381,13 +426,27 @@ async function startDiscordListener(options = {}) {
 
   client.on("messageCreate", async (message) => {
     if (!message || message.author?.bot) return;
-    if (!String(message.content || "").startsWith(promptPrefix)) return;
+    const content = String(message.content || "");
+    if (!content.startsWith(promptPrefix)) return;
 
     if (!message.channelId || !allowedChannelIds.has(String(message.channelId))) {
+      if (logIgnoredPrompts) {
+        console.log(
+          `Ignored prompt in disallowed channel ${String(message.channelId || "unknown")} from ${message.author?.tag || message.author?.id || "unknown-user"}`
+        );
+      }
+
+      if (notifyDisallowedChannel) {
+        await message.reply({
+          content: buildJessicaDisallowedChannelMessage(allowedChannelIds),
+          allowedMentions: { parse: [] },
+        });
+      }
+
       return;
     }
 
-    const rawPrompt = String(message.content || "").slice(promptPrefix.length).trim();
+    const rawPrompt = content.slice(promptPrefix.length).trim();
     if (!rawPrompt) {
       await message.reply({
         content: `Usage: ${promptPrefix}<prompt>`,
@@ -413,7 +472,7 @@ async function startDiscordListener(options = {}) {
     } catch (error) {
       console.error("Discord listener prompt handler failed:", error);
       await message.reply({
-        content: "Failed to process your prompt right now. Please try again.",
+        content: buildJessicaPromptFailureMessage(),
         allowedMentions: { parse: [] },
       });
     }
