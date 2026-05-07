@@ -141,6 +141,8 @@ Rules:
 - Do not guess server settings if files are not provided.
 - For performance issues, ask for logs/configs only when necessary.
 - For urgent server issues, prioritize safe rollback/backup/check commands.
+- Casual conversation is always allowed; stay warm, concise, and natural.
+- Use recent conversation context to continue the thread when user asks follow-ups.
 `;
 
 function isZonaMerahRelated(prompt) {
@@ -228,6 +230,99 @@ function buildJessicaCasualGreeting() {
     "Kalau mau casual chat boleh banget, atau kalau ada issue Zona Merah langsung spill aja detailnya.",
     "Aku bantu step-by-step, santai tapi tetap practical.",
   ].join(" ");
+}
+
+function normalizeConversationUserId(userId) {
+  const normalized = String(userId || "").trim();
+  return normalized || null;
+}
+
+function normalizeHistoryTurns(value, fallback = 6) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.max(0, Math.min(20, Math.floor(parsed)));
+}
+
+function trimConversationText(value, maxChars = 1200) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}...`;
+}
+
+async function getRecentConversationMessages({ userId, maxTurns }) {
+  if (!userId || maxTurns <= 0) return [];
+
+  try {
+    const rows = await AiRequestLog.findAll({
+      where: { userId },
+      order: [["createdAt", "DESC"]],
+      limit: maxTurns,
+      attributes: ["prompt", "response"],
+    });
+
+    return rows
+      .reverse()
+      .flatMap((row) => {
+        const prompt = trimConversationText(row?.prompt);
+        const response = trimConversationText(row?.response);
+        const messages = [];
+
+        if (prompt) {
+          messages.push({
+            role: "user",
+            content: prompt,
+          });
+        }
+
+        if (response) {
+          messages.push({
+            role: "assistant",
+            content: response,
+          });
+        }
+
+        return messages;
+      });
+  } catch (_error) {
+    return [];
+  }
+}
+
+async function persistAiRequestLog({ prompt, response, model, userId }) {
+  const payload = {
+    prompt,
+    response,
+    model,
+  };
+
+  const normalizedUserId = normalizeConversationUserId(userId);
+  if (normalizedUserId) {
+    payload.userId = normalizedUserId;
+  }
+
+  try {
+    await AiRequestLog.create(payload);
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    const missingUserColumn =
+      Boolean(payload.userId) &&
+      (message.includes("user_id") || message.includes("userid")) &&
+      (message.includes("does not exist") ||
+        message.includes("unknown column") ||
+        message.includes("invalid column"));
+
+    if (missingUserColumn) {
+      await AiRequestLog.create({
+        prompt,
+        response,
+        model,
+      });
+      return;
+    }
+
+    throw error;
+  }
 }
 
 function pickRandom(items, fallback = "") {
@@ -386,16 +481,24 @@ async function createChatCompletion(prompt, options = {}) {
     throw error;
   }
 
+  const conversationUserId = normalizeConversationUserId(options.userId);
+  const historyTurns = normalizeHistoryTurns(env.aiConversationHistoryTurns, 6);
+  const conversationHistoryMessages = await getRecentConversationMessages({
+    userId: conversationUserId,
+    maxTurns: historyTurns,
+  });
+
   const isInValidationScope = isZonaMerahRelated(normalizedPrompt);
   const isOutOfScopeCasualPrompt = !isInValidationScope;
 
   if (isJessicaGreetingIntent(normalizedPrompt)) {
     const content = buildJessicaCasualGreeting();
 
-    await AiRequestLog.create({
+    await persistAiRequestLog({
       prompt: normalizedPrompt,
       response: content,
       model: "persona-casual-greeting",
+      userId: conversationUserId,
     });
 
     return {
@@ -420,10 +523,11 @@ async function createChatCompletion(prompt, options = {}) {
       const status = await getLiveServerStatus(env);
       const content = redactSensitiveText(status.content);
 
-      await AiRequestLog.create({
+      await persistAiRequestLog({
         prompt: normalizedPrompt,
         response: content,
         model: "live-server-status",
+        userId: conversationUserId,
       });
 
       return {
@@ -445,10 +549,11 @@ async function createChatCompletion(prompt, options = {}) {
     } catch (_error) {
       const failMessage = buildJessicaPersonaErrorMessage("live_status");
 
-      await AiRequestLog.create({
+      await persistAiRequestLog({
         prompt: normalizedPrompt,
         response: failMessage,
         model: "live-server-status",
+        userId: conversationUserId,
       });
 
       return {
@@ -471,10 +576,11 @@ async function createChatCompletion(prompt, options = {}) {
 
       if (dbResult.matched) {
         const content = redactSensitiveText(dbResult.content);
-        await AiRequestLog.create({
+        await persistAiRequestLog({
           prompt: normalizedPrompt,
           response: content,
           model: "database-flea-user",
+          userId: conversationUserId,
         });
 
         return {
@@ -491,10 +597,11 @@ async function createChatCompletion(prompt, options = {}) {
     } catch (_error) {
       const failMessage = buildJessicaPersonaErrorMessage("flea_lookup");
 
-      await AiRequestLog.create({
+      await persistAiRequestLog({
         prompt: normalizedPrompt,
         response: failMessage,
         model: "database-flea-user",
+        userId: conversationUserId,
       });
 
       return {
@@ -528,10 +635,11 @@ async function createChatCompletion(prompt, options = {}) {
       ...(statusResult?.sources || []),
     ];
 
-    await AiRequestLog.create({
+    await persistAiRequestLog({
       prompt: normalizedPrompt,
       response: content,
       model: "login-troubleshoot-playbook",
+      userId: conversationUserId,
     });
 
     return {
@@ -562,6 +670,7 @@ async function createChatCompletion(prompt, options = {}) {
         model: env.aiModel,
         prompt: normalizedPrompt,
         persona: ZONA_MERAH_PERSONA,
+        conversationHistoryMessages,
         vectorStoreIds: env.aiVectorStoreIds,
         maxOutputTokens: maxTokensForPrompt,
         topK: env.aiVectorTopK,
@@ -577,10 +686,11 @@ async function createChatCompletion(prompt, options = {}) {
           ...(source.fileId ? { fileId: source.fileId } : {}),
         }));
 
-        await AiRequestLog.create({
+        await persistAiRequestLog({
           prompt: normalizedPrompt,
           response: safeContent,
           model: `${vectorAnswer.model || env.aiModel}:vector-first`,
+          userId: conversationUserId,
         });
 
         return {
@@ -624,10 +734,11 @@ async function createChatCompletion(prompt, options = {}) {
         "I checked SKILL.md and trusted internet sources but found no strong match. Please rephrase with clearer Zona Merah or Project Zomboid details."
       );
 
-      await AiRequestLog.create({
+      await persistAiRequestLog({
         prompt: normalizedPrompt,
         response: noEvidenceMessage,
         model: "grounding-fallback",
+        userId: conversationUserId,
       });
 
       return {
@@ -656,7 +767,7 @@ async function createChatCompletion(prompt, options = {}) {
     messages.push({
       role: "system",
       content:
-        "Prompt is outside Zona Merah validation keyword scope. Continue as casual chat, keep answer concise (max around 120 words), and do not claim server-specific facts unless explicitly provided by user.",
+        "Prompt is outside Zona Merah validation keyword scope. Continue naturally as casual conversation while keeping the Jessica persona. Do not claim server-specific facts unless explicitly provided by the user.",
     });
   }
 
@@ -668,6 +779,16 @@ async function createChatCompletion(prompt, options = {}) {
           ? `Use the grounded evidence below as your primary source. If evidence is insufficient, say that clearly and avoid guessing.\n\n${grounding.context}`
           : "No grounded evidence was provided for this request.",
     });
+  }
+
+  if (conversationHistoryMessages.length > 0) {
+    messages.push({
+      role: "system",
+      content:
+        "Use previous conversation turns as memory context. Continue naturally from recent context unless the user clearly changes topic.",
+    });
+
+    messages.push(...conversationHistoryMessages);
   }
 
   messages.push({
@@ -694,10 +815,11 @@ async function createChatCompletion(prompt, options = {}) {
     content = buildGroundedFallbackMessage(normalizedPrompt, grounding, completion);
   }
 
-  await AiRequestLog.create({
+  await persistAiRequestLog({
     prompt: normalizedPrompt,
     response: redactSensitiveText(content),
     model: env.aiModel,
+    userId: conversationUserId,
   });
 
   return {

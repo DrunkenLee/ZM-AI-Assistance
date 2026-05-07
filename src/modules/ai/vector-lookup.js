@@ -124,6 +124,7 @@ async function getVectorGrounding({
   model,
   prompt,
   persona,
+  conversationHistoryMessages,
   vectorStoreIds,
   maxOutputTokens,
   topK,
@@ -153,23 +154,41 @@ async function getVectorGrounding({
     vectorTool.max_num_results = topK;
   }
 
+  const historyMessages = Array.isArray(conversationHistoryMessages)
+    ? conversationHistoryMessages.filter((item) =>
+        item && (item.role === "user" || item.role === "assistant") && item.content
+      )
+    : [];
+
+  const inputMessages = [
+    {
+      role: "system",
+      content: persona,
+    },
+    {
+      role: "system",
+      content:
+        "Use vector-store results as primary knowledge. If retrieved evidence is weak, say what is missing instead of guessing.",
+    },
+  ];
+
+  if (historyMessages.length > 0) {
+    inputMessages.push({
+      role: "system",
+      content:
+        "Conversation memory is provided below. Continue naturally from recent context unless user clearly changes topic.",
+    });
+    inputMessages.push(...historyMessages);
+  }
+
+  inputMessages.push({
+    role: "user",
+    content: String(prompt || ""),
+  });
+
   const response = await openai.responses.create({
     model,
-    input: [
-      {
-        role: "system",
-        content: persona,
-      },
-      {
-        role: "system",
-        content:
-          "Use vector-store results as primary knowledge. If retrieved evidence is weak, say what is missing instead of guessing.",
-      },
-      {
-        role: "user",
-        content: String(prompt || ""),
-      },
-    ],
+    input: inputMessages,
     tools: [vectorTool],
     max_output_tokens: maxOutputTokens,
     ...samplingControl,

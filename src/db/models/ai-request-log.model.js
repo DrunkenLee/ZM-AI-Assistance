@@ -21,6 +21,11 @@ const AiRequestLog = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+    userId: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      field: "user_id",
+    },
   },
   {
     tableName: "ai_request_logs",
