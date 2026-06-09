@@ -10,7 +10,16 @@ function getClient() {
     throw createHttpError(500, "AI_API_KEY is missing on server.");
   }
   if (!client) {
-    client = new OpenAI({ apiKey: env.aiApiKey });
+    // Bound how long a single chat completion may hang. gpt-5 + replayed history
+    // can be slow; without this the SDK default is 600s with 2 silent retries,
+    // which stacks latency and lets requests outlive the nginx/Cloudflare proxy
+    // timeouts (producing a 502/524 instead of a clean error).
+    // Kept under Cloudflare's ~100s edge limit so we fail with a real 502 message.
+    const timeout = Number(process.env.OPENAI_TIMEOUT_MS) || 90000;
+    const maxRetries = Number.isFinite(Number(process.env.OPENAI_MAX_RETRIES))
+      ? Number(process.env.OPENAI_MAX_RETRIES)
+      : 1;
+    client = new OpenAI({ apiKey: env.aiApiKey, timeout, maxRetries });
   }
   return client;
 }
@@ -116,6 +125,16 @@ async function generateChatResponse(messages, options = {}) {
   }
 
   if (!content) {
+    // Surface why it was empty so this is diagnosable (e.g. finish_reason
+    // "length" means the token budget was too small for a reasoning model).
+    console.error(
+      "OpenAI returned empty content:",
+      JSON.stringify({
+        model: completion.model || model,
+        finish_reason: choice?.finish_reason || null,
+        usage: completion.usage || null,
+      })
+    );
     throw createHttpError(502, "AI service returned an empty response. Please try again.");
   }
 

@@ -49,6 +49,18 @@ async function bootstrap() {
     console.log(`Server listening on port ${PORT}`);
   });
 
+  // Timeouts must be ordered so each outer layer outlives the inner one;
+  // otherwise a slow AI call gets its socket yanked mid-flight -> 502.
+  // Inner: OpenAI SDK call ~90s. Here: keep sockets/requests alive well past that.
+  // Outer: nginx proxy_read_timeout (see nginx/ai.zonamerah.pro.conf).
+  //
+  // keepAliveTimeout MUST exceed nginx's upstream keepalive idle time, and
+  // headersTimeout MUST be >= keepAliveTimeout, or Node race-closes pooled
+  // connections that nginx is about to reuse (the classic intermittent 502).
+  httpServer.keepAliveTimeout = 130000; // 130s (default is 5s)
+  httpServer.headersTimeout = 135000;   // 135s, must be > keepAliveTimeout
+  httpServer.requestTimeout = 300000;   // 5 min cap on a single request
+
   if (START_DISCORD_LISTENER_WITH_SERVER) {
     try {
       listenerClient = await startDiscordListener({ skipSqlConnect: true });
