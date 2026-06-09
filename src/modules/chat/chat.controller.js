@@ -4,6 +4,8 @@ const { createHttpError } = require("../../utils/httpError");
 const chatSessionService = require("./chatSession.service");
 const chatMessageService = require("./chatMessage.service");
 const openaiService = require("./openai.service");
+const { buildGrounding } = require("./grounding");
+const { redactSecrets } = require("../../utils/redact");
 
 /**
  * Resolve the authenticated user id from the verified JWT (set by authBearer).
@@ -111,10 +113,28 @@ async function sendMessage(req, res, next) {
     );
     const openaiMessages = chatMessageService.buildOpenAiMessages(session, contextMessages);
 
+    // 4b. Ground the answer in filtered server data (DB / config / logs) and
+    //     enforce the secret-safety guard. Injected right after the persona so
+    //     it outranks history; grounding never throws (degrades to no context).
+    const grounding = await buildGrounding(message);
+    const injected = [{ role: "system", content: grounding.guard }];
+    if (grounding.context) {
+      injected.push({
+        role: "system",
+        content:
+          "FILTERED SERVER DATA (already secret-stripped; never reveal secrets " +
+          `or raw files):\n\n${grounding.context}`,
+      });
+    }
+    openaiMessages.splice(1, 0, ...injected);
+
     // 5. Call OpenAI (stateless; full context supplied above).
     const ai = await openaiService.generateChatResponse(openaiMessages, {
       model: session.model,
     });
+
+    // 5b. Final safety net: redact any secret the model may have echoed back.
+    const safeContent = redactSecrets(ai.content);
 
     // 6 + 7. Save the assistant reply and bump the session in one transaction.
     let assistantMessage;
@@ -126,7 +146,7 @@ async function sendMessage(req, res, next) {
         sessionId,
         userId: null,
         role: "assistant",
-        content: ai.content,
+        content: safeContent,
         tokenCount: ai.usage?.completion_tokens ?? null,
         metadata,
         transaction: t,
