@@ -10,7 +10,16 @@ function getClient() {
     throw createHttpError(500, "AI_API_KEY is missing on server.");
   }
   if (!client) {
-    client = new OpenAI({ apiKey: env.aiApiKey });
+    // Bound how long a single chat completion may hang. gpt-5 + replayed history
+    // can be slow; without this the SDK default is 600s with 2 silent retries,
+    // which stacks latency and lets requests outlive the nginx/Cloudflare proxy
+    // timeouts (producing a 502/524 instead of a clean error).
+    // Kept under Cloudflare's ~100s edge limit so we fail with a real 502 message.
+    const timeout = Number(process.env.OPENAI_TIMEOUT_MS) || 90000;
+    const maxRetries = Number.isFinite(Number(process.env.OPENAI_MAX_RETRIES))
+      ? Number(process.env.OPENAI_MAX_RETRIES)
+      : 1;
+    client = new OpenAI({ apiKey: env.aiApiKey, timeout, maxRetries });
   }
   return client;
 }
@@ -71,14 +80,30 @@ async function generateChatResponse(messages, options = {}) {
 
   const openai = getClient();
   const model = options.model || env.aiModel;
-  const maxTokens = resolveMaxTokens(options.maxTokens);
+  const reasoning = usesMaxCompletionTokens(model);
 
-  const tokenControl = usesMaxCompletionTokens(model)
+  // For reasoning models (gpt-5) max_completion_tokens is the TOTAL budget:
+  // hidden reasoning tokens + the visible answer. A small cap (e.g. 1024) gets
+  // entirely consumed by reasoning, leaving empty content (finish_reason
+  // "length") -> a 502. Enforce a floor so the answer has room.
+  let maxTokens = resolveMaxTokens(options.maxTokens);
+  if (reasoning) {
+    const floor = Number(process.env.CHAT_REASONING_MAX_TOKENS) || 8192;
+    maxTokens = Math.max(maxTokens, floor);
+  }
+
+  const tokenControl = reasoning
     ? { max_completion_tokens: maxTokens }
     : { max_tokens: maxTokens };
 
   const samplingControl = supportsCustomTemperature(model)
     ? { temperature: options.temperature ?? env.aiTemperature }
+    : {};
+
+  // Cap how hard gpt-5 "thinks" so reasoning doesn't eat the token budget (and
+  // to keep latency under the proxy timeouts). Override via CHAT_REASONING_EFFORT.
+  const reasoningControl = reasoning
+    ? { reasoning_effort: process.env.CHAT_REASONING_EFFORT || "low" }
     : {};
 
   let completion;
@@ -88,6 +113,7 @@ async function generateChatResponse(messages, options = {}) {
       messages,
       ...tokenControl,
       ...samplingControl,
+      ...reasoningControl,
     });
   } catch (error) {
     // Log only a short reason server-side; never echo upstream internals (or the
@@ -100,6 +126,16 @@ async function generateChatResponse(messages, options = {}) {
   const content = extractAssistantText(choice?.message);
 
   if (!content) {
+    // Surface why it was empty so this is diagnosable (e.g. finish_reason
+    // "length" means the token budget was too small for a reasoning model).
+    console.error(
+      "OpenAI returned empty content:",
+      JSON.stringify({
+        model: completion.model || model,
+        finish_reason: choice?.finish_reason || null,
+        usage: completion.usage || null,
+      })
+    );
     throw createHttpError(502, "AI service returned an empty response. Please try again.");
   }
 
