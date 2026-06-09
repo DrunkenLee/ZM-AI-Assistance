@@ -129,6 +129,7 @@ async function getVectorGrounding({
   maxOutputTokens,
   topK,
   samplingControl,
+  reasoningEffort,
 }) {
   const ids = Array.isArray(vectorStoreIds)
     ? vectorStoreIds.map((id) => String(id || "").trim()).filter(Boolean)
@@ -186,12 +187,23 @@ async function getVectorGrounding({
     content: String(prompt || ""),
   });
 
+  // The gpt-5 family uses part of max_output_tokens for hidden reasoning, so give
+  // it headroom and keep reasoning effort low to guarantee visible answer text.
+  const isReasoningModel = String(model || "").trim().toLowerCase().startsWith("gpt-5");
+  const allowedEfforts = ["minimal", "low", "medium", "high"];
+  const effort = allowedEfforts.includes(String(reasoningEffort || "").toLowerCase())
+    ? String(reasoningEffort).toLowerCase()
+    : null;
+
   const response = await openai.responses.create({
     model,
     input: inputMessages,
     tools: [vectorTool],
-    max_output_tokens: maxOutputTokens,
+    max_output_tokens: isReasoningModel
+      ? Math.max(Number(maxOutputTokens) || 0, 2000)
+      : maxOutputTokens,
     ...samplingControl,
+    ...(isReasoningModel && effort ? { reasoning: { effort } } : {}),
   });
 
   const content = extractResponseText(response);

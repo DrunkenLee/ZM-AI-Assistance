@@ -71,33 +71,49 @@ async function generateChatResponse(messages, options = {}) {
 
   const openai = getClient();
   const model = options.model || env.aiModel;
-  const maxTokens = resolveMaxTokens(options.maxTokens);
+  const isReasoningModel = usesMaxCompletionTokens(model);
 
-  const tokenControl = usesMaxCompletionTokens(model)
-    ? { max_completion_tokens: maxTokens }
-    : { max_tokens: maxTokens };
+  let maxTokens = resolveMaxTokens(options.maxTokens);
+  // gpt-5 spends part of the budget on hidden reasoning; ensure room for output.
+  if (isReasoningModel) maxTokens = Math.max(maxTokens, 2000);
 
   const samplingControl = supportsCustomTemperature(model)
     ? { temperature: options.temperature ?? env.aiTemperature }
     : {};
 
-  let completion;
-  try {
-    completion = await openai.chat.completions.create({
-      model,
-      messages,
-      ...tokenControl,
-      ...samplingControl,
-    });
-  } catch (error) {
-    // Log only a short reason server-side; never echo upstream internals (or the
-    // conversation) to the client.
-    console.error("OpenAI chat completion failed:", error?.message || error);
-    throw createHttpError(502, "AI service request failed. Please try again.");
-  }
+  const runCompletion = async (tokenCap, effort) => {
+    const tokenControl = isReasoningModel
+      ? { max_completion_tokens: tokenCap }
+      : { max_tokens: tokenCap };
+    const reasoningControl = isReasoningModel && effort ? { reasoning_effort: effort } : {};
 
-  const choice = completion.choices?.[0];
-  const content = extractAssistantText(choice?.message);
+    try {
+      return await openai.chat.completions.create({
+        model,
+        messages,
+        ...tokenControl,
+        ...samplingControl,
+        ...reasoningControl,
+      });
+    } catch (error) {
+      // Log only a short reason server-side; never echo upstream internals (or the
+      // conversation) to the client.
+      console.error("OpenAI chat completion failed:", error?.message || error);
+      throw createHttpError(502, "AI service request failed. Please try again.");
+    }
+  };
+
+  let completion = await runCompletion(maxTokens, isReasoningModel ? env.aiReasoningEffort : null);
+  let choice = completion.choices?.[0];
+  let content = extractAssistantText(choice?.message);
+
+  // gpt-5 can return only hidden reasoning (empty visible text). Retry once with
+  // minimal reasoning and extra headroom before surfacing an error.
+  if (!content && isReasoningModel) {
+    completion = await runCompletion(Math.max(maxTokens * 2, 4000), "minimal");
+    choice = completion.choices?.[0];
+    content = extractAssistantText(choice?.message);
+  }
 
   if (!content) {
     throw createHttpError(502, "AI service returned an empty response. Please try again.");

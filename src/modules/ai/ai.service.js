@@ -2,6 +2,7 @@ const OpenAI = require("openai");
 
 const env = require("../../config/env");
 const AiRequestLog = require("../../db/models/ai-request-log.model");
+const { createHttpError } = require("../../utils/httpError");
 const { getWorkshopGrounding } = require("./workshop-lookup");
 const { getInternetGrounding } = require("./internet-lookup");
 const { isServerStatusIntent, getLiveServerStatus } = require("./server-status");
@@ -11,6 +12,7 @@ const { getVectorGrounding } = require("./vector-lookup");
 let client;
 
 const DOMAIN_KEYWORDS = [
+  "zm",
   "zona merah",
   "project zomboid",
   "zomboid",
@@ -35,9 +37,6 @@ const DOMAIN_KEYWORDS = [
   "horde",
   "survival",
 ];
-
-const SCOPE_REFUSAL_MESSAGE =
-  "I can only answer questions related to Zona Merah Project Zomboid Community Server. Please ask about server features, workshop mods, gameplay systems, Discord bot, whitelist, auction, or server operations.";
 
 const LOGIN_TROUBLE_KEYWORDS = [
   "login",
@@ -142,6 +141,8 @@ Rules:
 - For performance issues, ask for logs/configs only when necessary.
 - For urgent server issues, prioritize safe rollback/backup/check commands.
 - Casual conversation is always allowed; stay warm, concise, and natural.
+- Answer general questions too. Do not reject a user just because the topic is outside Zona Merah.
+- For non-Zona Merah topics, answer normally as Jessica and avoid claiming server-specific facts unless evidence is provided.
 - Use recent conversation context to continue the thread when user asks follow-ups.
 `;
 
@@ -156,6 +157,16 @@ function usesMaxCompletionTokens(model) {
 
 function supportsCustomTemperature(model) {
   return !String(model || "").trim().toLowerCase().startsWith("gpt-5");
+}
+
+// gpt-5 reasoning models accept `reasoning_effort`. Keeping it low/minimal makes
+// the model emit visible answer text instead of consuming the whole token budget
+// on hidden reasoning (which returns an empty completion).
+function buildReasoningControl(model, effort) {
+  if (!usesMaxCompletionTokens(model)) return {};
+  const allowed = ["minimal", "low", "medium", "high"];
+  const chosen = allowed.includes(effort) ? effort : "low";
+  return { reasoning_effort: chosen };
 }
 
 function extractAssistantText(message) {
@@ -179,6 +190,78 @@ function extractAssistantText(message) {
   }
 
   return "";
+}
+
+function extractResponseText(response) {
+  const directText = String(response?.output_text || "").trim();
+  if (directText) return directText;
+
+  const parts = [];
+  const outputItems = Array.isArray(response?.output) ? response.output : [];
+
+  for (const item of outputItems) {
+    if (item?.type === "message" && Array.isArray(item.content)) {
+      for (const part of item.content) {
+        if (typeof part === "string" && part.trim()) {
+          parts.push(part.trim());
+          continue;
+        }
+
+        if (typeof part?.text === "string" && part.text.trim()) {
+          parts.push(part.text.trim());
+          continue;
+        }
+
+        if (part?.text && typeof part.text.value === "string" && part.text.value.trim()) {
+          parts.push(part.text.value.trim());
+          continue;
+        }
+
+        if (typeof part?.content === "string" && part.content.trim()) {
+          parts.push(part.content.trim());
+        }
+      }
+      continue;
+    }
+
+    if (typeof item?.text === "string" && item.text.trim()) {
+      parts.push(item.text.trim());
+    }
+  }
+
+  return parts.join("\n").trim();
+}
+
+function normalizeResponsesUsage(usage) {
+  if (!usage || typeof usage !== "object") return null;
+
+  if (typeof usage.prompt_tokens === "number" || typeof usage.completion_tokens === "number") {
+    return usage;
+  }
+
+  const inputTokens = Number(usage.input_tokens || 0);
+  const outputTokens = Number(usage.output_tokens || 0);
+  const totalTokens = Number(usage.total_tokens || inputTokens + outputTokens);
+
+  return {
+    prompt_tokens: inputTokens,
+    completion_tokens: outputTokens,
+    total_tokens: totalTokens,
+    prompt_tokens_details: {
+      cached_tokens: Number(usage.input_tokens_details?.cached_tokens || 0),
+      audio_tokens: Number(usage.input_tokens_details?.audio_tokens || 0),
+    },
+    completion_tokens_details: {
+      reasoning_tokens: Number(usage.output_tokens_details?.reasoning_tokens || 0),
+      audio_tokens: Number(usage.output_tokens_details?.audio_tokens || 0),
+      accepted_prediction_tokens: Number(
+        usage.output_tokens_details?.accepted_prediction_tokens || 0
+      ),
+      rejected_prediction_tokens: Number(
+        usage.output_tokens_details?.rejected_prediction_tokens || 0
+      ),
+    },
+  };
 }
 
 function redactSensitiveText(value) {
@@ -330,62 +413,6 @@ function pickRandom(items, fallback = "") {
   return items[Math.floor(Math.random() * items.length)] || fallback;
 }
 
-function buildJessicaPersonaErrorMessage(topic, extraLine = "") {
-  const openers = [
-    "Jessica here. I hit a small snag while processing that.",
-    "Hey, Jessica here. I ran into a quick blocker.",
-    "Aku Jessica, barusan ada kendala kecil waktu proses request kamu.",
-    "Jessica checking in, I could not finish that step cleanly just now.",
-  ];
-
-  const topicHints = {
-    live_status: [
-      "I could not complete the live server status check right now.",
-      "Live status verification is temporarily unavailable on my side.",
-      "Aku belum bisa selesaikan pengecekan status server sekarang.",
-    ],
-    flea_lookup: [
-      "I could not finish the flea market user lookup at the moment.",
-      "Database lookup for flea user data is not responding cleanly right now.",
-      "Pengecekan database user flea belum berhasil untuk saat ini.",
-    ],
-    no_evidence: [
-      "I could not find enough trusted evidence for that request.",
-      "I am missing solid source evidence for that exact question.",
-      "Aku belum nemu evidence yang cukup kuat untuk pertanyaan itu.",
-    ],
-    empty_completion: [
-      "The model returned no final answer text.",
-      "I received an empty final response from the model.",
-      "Model-nya tidak mengembalikan jawaban final kali ini.",
-    ],
-    default: [
-      "I could not complete that step cleanly right now.",
-      "That request did not finish properly this time.",
-      "Permintaan ini belum berhasil selesai untuk saat ini.",
-    ],
-  };
-
-  const retryLines = [
-    "Please retry in a moment and I will continue from there.",
-    "Please try again shortly and I will re-check it for you.",
-    "Coba ulang sebentar lagi, nanti aku bantu cek lagi ya.",
-    "Retry once more in a bit, I will handle it step-by-step.",
-  ];
-
-  const chosenTopic = pickRandom(topicHints[topic] || topicHints.default);
-  const chosenExtra = String(extraLine || "").trim();
-
-  return [
-    pickRandom(openers),
-    chosenTopic,
-    chosenExtra,
-    pickRandom(retryLines),
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 function isLoginTroubleshootIntent(prompt) {
   const normalized = String(prompt || "").toLowerCase();
   return LOGIN_TROUBLE_KEYWORDS.some((keyword) => normalized.includes(keyword));
@@ -419,45 +446,9 @@ function buildLoginTroubleshootMessage(statusResult) {
   ].join("\n");
 }
 
-function isReasoningOnlyCompletion(completion, content) {
-  if (content) return false;
-  const completionTokens = Number(completion?.usage?.completion_tokens || 0);
-  const reasoningTokens = Number(completion?.usage?.completion_tokens_details?.reasoning_tokens || 0);
-  return completionTokens > 0 && reasoningTokens >= completionTokens;
-}
-
-function buildGroundedFallbackMessage(prompt, grounding, completion) {
-
-  if (isLoginTroubleshootIntent(prompt)) {
-    return buildLoginTroubleshootMessage(null);
-  }
-
-  const sources = Array.isArray(grounding?.sources)
-    ? grounding.sources.slice(0, 3).map((source) => source.file)
-    : [];
-  const sourceLine =
-    sources.length > 0
-      ? `Available source(s): ${sources.join(", ")}.`
-      : "No source snippets were available.";
-  const spentAllReasoning = isReasoningOnlyCompletion(completion, "");
-
-  return buildJessicaPersonaErrorMessage(
-    "empty_completion",
-    [
-      spentAllReasoning
-        ? "I have spent completion budget on reasoning without getting final output."
-        : "No final message text was produced.",
-      sourceLine,
-      "Try a narrower request like: step-by-step fix for whitelist/login failed.",
-    ].join(" ")
-  );
-}
-
 function getClient() {
   if (!env.aiApiKey) {
-    const error = new Error("AI_API_KEY is missing");
-    error.status = 500;
-    throw error;
+    throw createHttpError(500, "AI_API_KEY is missing");
   }
 
   if (!client) {
@@ -469,16 +460,12 @@ function getClient() {
 
 async function createChatCompletion(prompt, options = {}) {
   if (!env.aiEnabled) {
-    const error = new Error("AI feature is disabled");
-    error.status = 403;
-    throw error;
+    throw createHttpError(403, "AI feature is disabled");
   }
 
   const normalizedPrompt = String(prompt || "").trim();
   if (!normalizedPrompt) {
-    const error = new Error("prompt cannot be empty");
-    error.status = 400;
-    throw error;
+    throw createHttpError(400, "prompt cannot be empty");
   }
 
   const conversationUserId = normalizeConversationUserId(options.userId);
@@ -488,8 +475,7 @@ async function createChatCompletion(prompt, options = {}) {
     maxTurns: historyTurns,
   });
 
-  const isInValidationScope = isZonaMerahRelated(normalizedPrompt);
-  const isOutOfScopeCasualPrompt = !isInValidationScope;
+  const hasZonaMerahContext = isZonaMerahRelated(normalizedPrompt);
 
   if (isJessicaGreetingIntent(normalizedPrompt)) {
     const content = buildJessicaCasualGreeting();
@@ -518,7 +504,7 @@ async function createChatCompletion(prompt, options = {}) {
     };
   }
 
-  if (isInValidationScope && isServerStatusIntent(normalizedPrompt)) {
+  if (isServerStatusIntent(normalizedPrompt)) {
     try {
       const status = await getLiveServerStatus(env);
       const content = redactSensitiveText(status.content);
@@ -546,29 +532,13 @@ async function createChatCompletion(prompt, options = {}) {
           bestLatencyMs: status.bestLatencyMs,
         },
       };
-    } catch (_error) {
-      const failMessage = buildJessicaPersonaErrorMessage("live_status");
-
-      await persistAiRequestLog({
-        prompt: normalizedPrompt,
-        response: failMessage,
-        model: "live-server-status",
-        userId: conversationUserId,
-      });
-
-      return {
-        content: failMessage,
-        model: "live-server-status",
-        usage: null,
-        blocked: false,
-        grounded: false,
-        sourceType: "live_check",
-        sources: [],
-      };
+    } catch (error) {
+      console.error("Live server status check failed:", error?.message || error);
+      throw createHttpError(502, "Live server status check failed. Please try again.");
     }
   }
 
-  if (isInValidationScope && isFleaUserIntent(normalizedPrompt)) {
+  if (isFleaUserIntent(normalizedPrompt)) {
     try {
       const dbResult = await getFleaUserDatabaseGrounding(normalizedPrompt, {
         userId: options.userId,
@@ -594,29 +564,13 @@ async function createChatCompletion(prompt, options = {}) {
           sources: dbResult.sources,
         };
       }
-    } catch (_error) {
-      const failMessage = buildJessicaPersonaErrorMessage("flea_lookup");
-
-      await persistAiRequestLog({
-        prompt: normalizedPrompt,
-        response: failMessage,
-        model: "database-flea-user",
-        userId: conversationUserId,
-      });
-
-      return {
-        content: failMessage,
-        model: "database-flea-user",
-        usage: null,
-        blocked: false,
-        grounded: false,
-        sourceType: "database",
-        sources: [],
-      };
+    } catch (error) {
+      console.error("Flea market user lookup failed:", error?.message || error);
+      throw createHttpError(502, "Flea market user lookup failed. Please try again.");
     }
   }
 
-  if (isInValidationScope && isLoginTroubleshootIntent(normalizedPrompt)) {
+  if (hasZonaMerahContext && isLoginTroubleshootIntent(normalizedPrompt)) {
     let statusResult = null;
 
     try {
@@ -656,14 +610,25 @@ async function createChatCompletion(prompt, options = {}) {
 
   const openai = getClient();
 
-  const casualTokenCap = Math.max(1, Math.min(300, Number(env.aiCasualMaxTokens || 300)));
-  const maxTokensForPrompt = isOutOfScopeCasualPrompt ? casualTokenCap : env.aiMaxTokens;
+  // Do NOT force a tiny cap here. gpt-5 spends part of its budget on hidden
+  // reasoning, so a 300-token ceiling routinely yields empty answers. Give the
+  // model real headroom for visible output.
+  const casualTokenCap = Math.max(256, Number(env.aiCasualMaxTokens || 300));
+  const baseMaxTokens = hasZonaMerahContext ? env.aiMaxTokens : casualTokenCap;
+  const maxTokensForPrompt = usesMaxCompletionTokens(env.aiModel)
+    ? Math.max(baseMaxTokens, 2000)
+    : baseMaxTokens;
 
   const samplingControl = supportsCustomTemperature(env.aiModel)
     ? { temperature: env.aiTemperature }
     : {};
 
-  if (env.aiVectorEnabled && Array.isArray(env.aiVectorStoreIds) && env.aiVectorStoreIds.length > 0) {
+  if (
+    hasZonaMerahContext &&
+    env.aiVectorEnabled &&
+    Array.isArray(env.aiVectorStoreIds) &&
+    env.aiVectorStoreIds.length > 0
+  ) {
     try {
       const vectorAnswer = await getVectorGrounding({
         openai,
@@ -675,6 +640,7 @@ async function createChatCompletion(prompt, options = {}) {
         maxOutputTokens: maxTokensForPrompt,
         topK: env.aiVectorTopK,
         samplingControl,
+        reasoningEffort: usesMaxCompletionTokens(env.aiModel) ? env.aiReasoningEffort : null,
       });
 
       if (vectorAnswer.enabled && vectorAnswer.content) {
@@ -717,7 +683,7 @@ async function createChatCompletion(prompt, options = {}) {
     keywords: [],
   };
 
-  if (isInValidationScope) {
+  if (hasZonaMerahContext) {
     const skillGrounding = await getWorkshopGrounding(normalizedPrompt, env);
     grounding = skillGrounding;
 
@@ -728,28 +694,9 @@ async function createChatCompletion(prompt, options = {}) {
       }
     }
 
-    if (grounding.enabled && grounding.sources.length === 0) {
-      const noEvidenceMessage = buildJessicaPersonaErrorMessage(
-        "no_evidence",
-        "I checked SKILL.md and trusted internet sources but found no strong match. Please rephrase with clearer Zona Merah or Project Zomboid details."
-      );
-
-      await persistAiRequestLog({
-        prompt: normalizedPrompt,
-        response: noEvidenceMessage,
-        model: "grounding-fallback",
-        userId: conversationUserId,
-      });
-
-      return {
-        content: noEvidenceMessage,
-        model: "grounding-fallback",
-        usage: null,
-        blocked: false,
-        grounded: false,
-        sources: [],
-      };
-    }
+    // If no grounded sources were found we intentionally fall through to the LLM
+    // below (with a "no grounded evidence" system note) instead of returning an
+    // error. Jessica can still answer from the persona + general knowledge.
   }
 
   const tokenControl = usesMaxCompletionTokens(env.aiModel)
@@ -763,15 +710,7 @@ async function createChatCompletion(prompt, options = {}) {
     },
   ];
 
-  if (isOutOfScopeCasualPrompt) {
-    messages.push({
-      role: "system",
-      content:
-        "Prompt is outside Zona Merah validation keyword scope. Continue naturally as casual conversation while keeping the Jessica persona. Do not claim server-specific facts unless explicitly provided by the user.",
-    });
-  }
-
-  if (isInValidationScope) {
+  if (hasZonaMerahContext) {
     messages.push({
       role: "system",
       content:
@@ -796,23 +735,65 @@ async function createChatCompletion(prompt, options = {}) {
     content: normalizedPrompt,
   });
 
-  const completion = await openai.chat.completions.create({
+  const reasoningControl = buildReasoningControl(env.aiModel, env.aiReasoningEffort);
+
+  let completion = await openai.chat.completions.create({
     model: env.aiModel,
     messages,
     ...tokenControl,
     ...samplingControl,
+    ...reasoningControl,
   });
 
-  const firstChoice = completion.choices?.[0];
-  const refusal = String(firstChoice?.message?.refusal || "").trim();
+  let firstChoice = completion.choices?.[0];
+  let refusal = String(firstChoice?.message?.refusal || "").trim();
   let content = extractAssistantText(firstChoice?.message);
+  let responseModel = completion.model || env.aiModel;
+  let responseUsage = completion.usage || null;
+
+  // Safety net: gpt-5 can spend its whole budget on hidden reasoning and return
+  // no visible text. Retry once with minimal reasoning + extra headroom so the
+  // user gets a real answer instead of a persona error message.
+  if (!content && !refusal && usesMaxCompletionTokens(env.aiModel)) {
+    try {
+      completion = await openai.chat.completions.create({
+        model: env.aiModel,
+        messages,
+        max_completion_tokens: Math.max(maxTokensForPrompt * 2, 4000),
+        reasoning_effort: "minimal",
+      });
+      firstChoice = completion.choices?.[0];
+      refusal = String(firstChoice?.message?.refusal || "").trim();
+      content = extractAssistantText(firstChoice?.message);
+      responseModel = completion.model || env.aiModel;
+      responseUsage = completion.usage || null;
+    } catch (_retryError) {
+      // Keep the original (empty) result; handled by the fallback below.
+    }
+  }
+
+  if (!content && !refusal && usesMaxCompletionTokens(env.aiModel)) {
+    try {
+      const response = await openai.responses.create({
+        model: env.aiModel,
+        input: messages,
+        max_output_tokens: Math.max(maxTokensForPrompt * 2, 4000),
+        reasoning: { effort: "minimal" },
+      });
+      content = extractResponseText(response);
+      responseModel = String(response?.model || env.aiModel);
+      responseUsage = normalizeResponsesUsage(response?.usage);
+    } catch (responseError) {
+      console.error("OpenAI responses fallback failed:", responseError?.message || responseError);
+    }
+  }
 
   if (!content && refusal) {
     content = `Request was refused by the model: ${refusal}`;
   }
 
   if (!content) {
-    content = buildGroundedFallbackMessage(normalizedPrompt, grounding, completion);
+    throw createHttpError(502, "AI service returned an empty response. Please try again.");
   }
 
   await persistAiRequestLog({
@@ -824,8 +805,8 @@ async function createChatCompletion(prompt, options = {}) {
 
   return {
     content: redactSensitiveText(content),
-    model: completion.model,
-    usage: completion.usage,
+    model: responseModel,
+    usage: responseUsage,
     grounded: grounding.sources.length > 0,
     sourceType:
       grounding.sources.length > 0 ? inferSourceType(grounding.sources[0].file) : "other",

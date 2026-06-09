@@ -106,6 +106,13 @@ module.exports = {
   aiCasualMaxTokens: parseNumber(process.env.AI_CASUAL_MAX_TOKENS, 300),
   aiOperationalMaxTokens: parseNumber(process.env.AI_OPERATIONAL_MAX_TOKENS, 180),
   aiTemperature: Number(process.env.AI_TEMPERATURE || 1),
+  // Reasoning effort for the gpt-5 family. Lower effort = the model spends less of
+  // its token budget on hidden reasoning and reliably returns visible answer text.
+  // Allowed: minimal | low | medium | high.
+  aiReasoningEffort: (() => {
+    const value = String(process.env.AI_REASONING_EFFORT || "low").trim().toLowerCase();
+    return ["minimal", "low", "medium", "high"].includes(value) ? value : "low";
+  })(),
   dbSsl: parseBoolean(process.env.DB_SSL, false),
   databaseUrl: resolveDatabaseUrl(),
 };

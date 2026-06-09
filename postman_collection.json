@@ -1,0 +1,2262 @@
+{
+  "info": {
+    "_postman_id": "zm-ai-assistance-full-test-suite-v2",
+    "name": "ZM AI Assistance — Full Test Suite",
+    "description": "Complete test coverage for ZM-AI-Assistance API (port 3002).\n\nRUN ORDER:\n1. Root & Health\n2. Auth (Register sets {{authToken}} and {{registeredUsername}})\n3. Auth / Register Alt User (sets {{altAuthToken}} for wrong-owner tests)\n4. AI Chat\n5. Chat Sessions (Create sets {{sessionId}})\n\nAll requests use {{baseUrl}} (default: http://localhost:3002).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",            "value": "http://localhost:3002", "type": "string" },
+    { "key": "authToken",          "value": "",                      "type": "string" },
+    { "key": "altAuthToken",       "value": "",                      "type": "string" },
+    { "key": "registeredUsername", "value": "",                      "type": "string" },
+    { "key": "testPassword",       "value": "testpass123",           "type": "string" },
+    { "key": "sessionId",          "value": "",                      "type": "string" },
+    { "key": "deleteSessionId",    "value": "",                      "type": "string" },
+    { "key": "longPrompt",         "value": "",                      "type": "string" },
+    { "key": "longMessage",        "value": "",                      "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "01. Root & Health",
+      "item": [
+        {
+          "name": "GET / — Service Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns service info', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.have.property('service');",
+                  "  pm.expect(json.status).to.equal('ok');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": ["{{baseUrl}}"],
+              "path": [""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/health — DB Connected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('DB connected', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.be.true;",
+                  "  pm.expect(json.data.status).to.equal('ok');",
+                  "  pm.expect(json.data.database).to.equal('connected');",
+                  "  pm.expect(json.data).to.have.property('timestamp');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "health"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+
+    {
+      "name": "02. Auth",
+      "item": [
+
+        {
+          "name": "Register",
+          "item": [
+            {
+              "name": "✅ Register — Success (minimal)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set('registeredUsername', 'zmtest_' + Date.now());"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Returns token and user', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json).to.have.property('token');",
+                      "  pm.expect(json.token).to.be.a('string').and.not.empty;",
+                      "  pm.expect(json).to.have.property('user');",
+                      "  pm.expect(json.user).to.have.property('id');",
+                      "  pm.expect(json.user).to.not.have.property('password1');",
+                      "  pm.expect(json.user).to.not.have.property('password2');",
+                      "  pm.collectionVariables.set('authToken', json.token);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"{{registeredUsername}}\",\n  \"password\": \"{{testPassword}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/register",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "register"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Register — Success (with Discord info)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set('discordUsername', 'zmtest_dc_' + Date.now());"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('User has discord id', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.token).to.be.a('string');",
+                      "  pm.expect(json.user.discordid).to.equal('987654321');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"{{discordUsername}}\",\n  \"password\": \"{{testPassword}}\",\n  \"discordId\": \"987654321\",\n  \"discordTag\": \"ZMPlayer#0042\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/register",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "register"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Register — Duplicate Username (409)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 409', () => pm.response.to.have.status(409));",
+                      "pm.test('Error response shape', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "  pm.expect(json.message).to.include('already registered');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"{{registeredUsername}}\",\n  \"password\": \"differentpass\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/register",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "register"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Register — Missing Username (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Validation error', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "  pm.expect(json.message).to.be.a('string').and.not.empty;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"{{testPassword}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/register",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "register"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Register — Missing Password (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Validation error', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"someuser\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/register",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "register"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Register — Whitespace-Only Username (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Trim + minLength rejects whitespace', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"   \",\n  \"password\": \"{{testPassword}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/register",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "register"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Register — Empty Body (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Error response', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/register",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "register"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Login",
+          "item": [
+            {
+              "name": "✅ Login — Success (sets authToken)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Returns token and user', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.token).to.be.a('string').and.not.empty;",
+                      "  pm.expect(json.user).to.have.property('id');",
+                      "  pm.expect(json.user).to.not.have.property('password1');",
+                      "  pm.collectionVariables.set('authToken', json.token);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"{{registeredUsername}}\",\n  \"password\": \"{{testPassword}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/login",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "login"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Login — Wrong Password (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Invalid credentials message', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "  pm.expect(json.message).to.include('Invalid credentials');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"{{registeredUsername}}\",\n  \"password\": \"wrongpassword!\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/login",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "login"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Login — Non-Existent User (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Invalid credentials message', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"ghost_user_that_does_not_exist_xyz\",\n  \"password\": \"nopass\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/login",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "login"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Login — Missing Username (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Validation error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"{{testPassword}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/login",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "login"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Login — Missing Password (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Validation error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"{{registeredUsername}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/login",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "login"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Me (Profile)",
+          "item": [
+            {
+              "name": "✅ Me — Success",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Returns user object (no passwords)', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json).to.have.property('user');",
+                      "  pm.expect(json.user).to.have.property('id');",
+                      "  pm.expect(json.user).to.not.have.property('password1');",
+                      "  pm.expect(json.user).to.not.have.property('password2');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/me",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "me"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Me — No Token (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Missing token error', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "  pm.expect(json.message).to.be.a('string');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/me",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "me"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Me — Invalid Token (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Invalid token error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer thisisnotavalidjwt.atall.nope" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/me",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "me"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Me — Malformed Authorization Header (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Token {{authToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/auth/me",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "auth", "me"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Register Alt User (for wrong-owner tests)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('altUsername', 'zmalt_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Sets altAuthToken', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.token).to.be.a('string');",
+                  "  pm.collectionVariables.set('altAuthToken', json.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{altUsername}}\",\n  \"password\": \"altpass456\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            }
+          },
+          "response": []
+        }
+
+      ]
+    },
+
+    {
+      "name": "03. AI Chat (Legacy)",
+      "item": [
+
+        {
+          "name": "Happy Path — Intent Routing",
+          "item": [
+            {
+              "name": "✅ Chat — Jessica Greeting Intent",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Persona greeting response', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.content).to.be.a('string').and.not.empty;",
+                      "  pm.expect(json.data.model).to.include('persona');",
+                      "  pm.expect(json.data.grounded).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"hi jessica!\",\n  \"userId\": \"discord-test-001\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Chat — Server Status Intent",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Live status response shape', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.content).to.be.a('string').and.not.empty;",
+                      "  pm.expect(['live-server-status', 'other']).to.include(json.data.sourceType);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"is zona merah server online right now?\",\n  \"userId\": \"discord-test-001\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Chat — Flea Market User Lookup Intent",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('DB lookup response', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.content).to.be.a('string');",
+                      "  pm.expect(json.data).to.have.property('blocked');",
+                      "  pm.expect(['database', 'other']).to.include(json.data.sourceType);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"flea market user discord 123456789\",\n  \"userId\": \"discord-test-001\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Chat — Login Troubleshoot Intent",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Playbook response', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.content).to.be.a('string').and.not.empty;",
+                      "  pm.expect(['system_playbook', 'other']).to.include(json.data.sourceType);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"cannot login to the server, keeps getting kicked\",\n  \"userId\": \"discord-test-002\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Chat — General PZ/Zona Merah Question",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Full AI response shape', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.content).to.be.a('string').and.not.empty;",
+                      "  pm.expect(json.data.model).to.be.a('string');",
+                      "  pm.expect(json.data).to.have.property('grounded');",
+                      "  pm.expect(json.data).to.have.property('sources');",
+                      "  pm.expect(json.data.sources).to.be.an('array');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"what mods does zona merah server use?\",\n  \"userId\": \"discord-test-003\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Chat — Without UserId (no history tracking)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Valid response without userId', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.content).to.be.a('string').and.not.empty;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"how do I join zona merah server?\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Chat — Conversation History (same userId, follow-up)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Follow-up response uses history', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.content).to.be.a('string').and.not.empty;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"can you elaborate more on that?\",\n  \"userId\": \"discord-test-003\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Chat — Out-of-Scope Question (should decline politely)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Polite decline response', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.content).to.be.a('string').and.not.empty;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"what is the capital of France?\",\n  \"userId\": \"discord-test-oos\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Validation Errors",
+          "item": [
+            {
+              "name": "❌ Chat — Empty Prompt (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Validation error for empty prompt', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "  pm.expect(json.message).to.be.a('string');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Chat — Missing Prompt (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Required field error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"userId\": \"discord-test-001\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Chat — Prompt Exceeds 4000 Chars (400)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set('longPrompt', 'x'.repeat(4001));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Max length violation error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"{{longPrompt}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Chat — Whitespace-Only Prompt (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Trim + minLength rejects whitespace', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"     \"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Chat — UserId Exceeds 100 Chars (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('UserId max length violation', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"prompt\": \"hello jessica\",\n  \"userId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaX\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/ai/chat",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "ai", "chat"]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+
+      ]
+    },
+
+    {
+      "name": "04. Chat Sessions",
+      "item": [
+
+        {
+          "name": "Create Session",
+          "item": [
+            {
+              "name": "✅ Create Session — Minimal (no body, sets sessionId)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Session created with correct shape', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  const d = json.data;",
+                      "  pm.expect(d.session_id).to.be.a('string').and.match(/^[0-9a-f-]{36}$/i);",
+                      "  pm.expect(d).to.have.property('model');",
+                      "  pm.expect(d).to.have.property('created_at');",
+                      "  pm.collectionVariables.set('sessionId', d.session_id);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Create Session — With Title",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Title preserved', () => {",
+                      "  const d = pm.response.json().data;",
+                      "  pm.expect(d.title).to.equal('Server Help Session');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Server Help Session\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Create Session — With System Prompt",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('System prompt preserved', () => {",
+                      "  const d = pm.response.json().data;",
+                      "  pm.expect(d.system_prompt).to.equal('Be very brief and use bullet points.');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"system_prompt\": \"Be very brief and use bullet points.\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Create Session — Full (title + system_prompt, sets deleteSessionId)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Both fields saved', () => {",
+                      "  const d = pm.response.json().data;",
+                      "  pm.expect(d.title).to.equal('Delete Me');",
+                      "  pm.expect(d.system_prompt).to.equal('Temporary session for delete test.');",
+                      "  pm.collectionVariables.set('deleteSessionId', d.session_id);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Delete Me\",\n  \"system_prompt\": \"Temporary session for delete test.\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Create Session — No Auth (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Create Session — Title Exceeds 120 Chars (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Title max length error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaX\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "List Sessions",
+          "item": [
+            {
+              "name": "✅ List Sessions — Success",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Sessions array returned', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.sessions).to.be.an('array');",
+                      "  if (json.data.sessions.length > 0) {",
+                      "    const s = json.data.sessions[0];",
+                      "    pm.expect(s).to.have.property('id');",
+                      "    pm.expect(s).to.have.property('user_id');",
+                      "    pm.expect(s).to.have.property('model');",
+                      "    pm.expect(s).to.have.property('created_at');",
+                      "  }",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ List Sessions — No Auth (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Send Message",
+          "item": [
+            {
+              "name": "✅ Send Message — First Message",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Returns both user and assistant messages', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.session_id).to.equal(pm.collectionVariables.get('sessionId'));",
+                      "  const um = json.data.user_message;",
+                      "  pm.expect(um.role).to.equal('user');",
+                      "  pm.expect(um.content).to.be.a('string').and.not.empty;",
+                      "  pm.expect(um.id).to.match(/^[0-9a-f-]{36}$/i);",
+                      "  const am = json.data.assistant_message;",
+                      "  pm.expect(am.role).to.equal('assistant');",
+                      "  pm.expect(am.content).to.be.a('string').and.not.empty;",
+                      "  pm.expect(am.metadata).to.have.property('model');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"How do I join the Zona Merah server?\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Send Message — Follow-up (conversation context)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Follow-up answered', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.assistant_message.content).to.be.a('string').and.not.empty;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"What mods do I need to install?\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Send Message — No Auth (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"Hello\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Send Message — Empty Message (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Validation error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Send Message — Message Exceeds 8000 Chars (400)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set('longMessage', 'm'.repeat(8001));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Max length violation', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"{{longMessage}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Send Message — Invalid UUID in Path (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('UUID validation error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"Hello\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/not-a-valid-uuid/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "not-a-valid-uuid", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Send Message — Non-Existent Session (404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 404', () => pm.response.to.have.status(404));",
+                      "pm.test('Not found error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"Hello\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/00000000-0000-0000-0000-000000000000/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "00000000-0000-0000-0000-000000000000", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Send Message — Wrong Owner (alt token, 404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 404 (ownership enforced)', () => pm.response.to.have.status(404));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{altAuthToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"Trying to access someone else's session\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Get Messages",
+          "item": [
+            {
+              "name": "✅ Get Messages — Success (has messages now)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Messages array with correct shape', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.session_id).to.equal(pm.collectionVariables.get('sessionId'));",
+                      "  pm.expect(json.data.messages).to.be.an('array');",
+                      "  if (json.data.messages.length > 0) {",
+                      "    const msg = json.data.messages[0];",
+                      "    pm.expect(msg).to.have.property('id');",
+                      "    pm.expect(msg).to.have.property('role');",
+                      "    pm.expect(['user','assistant','system','tool']).to.include(msg.role);",
+                      "    pm.expect(msg).to.have.property('content');",
+                      "    pm.expect(msg).to.have.property('created_at');",
+                      "  }",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Get Messages — No Auth (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Get Messages — Invalid UUID (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('UUID format error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/invalid-id-here/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "invalid-id-here", "messages"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Get Messages — Wrong Owner (alt token, 404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 404 (ownership enforced)', () => pm.response.to.have.status(404));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{altAuthToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}/messages",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}", "messages"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Update Session",
+          "item": [
+            {
+              "name": "✅ Update Session — Change Title",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Title updated', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.title).to.equal('Updated Title');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Updated Title\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Update Session — Change System Prompt",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('System prompt updated', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.system_prompt).to.equal('Answer only in Indonesian.');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"system_prompt\": \"Answer only in Indonesian.\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "✅ Update Session — Clear Title (set to null)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Title cleared to null', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.title).to.be.null;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": null\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Update Session — No Fields Provided (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('Requires at least one field', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.false;",
+                      "  pm.expect(json.message).to.include('title');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{authToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Update Session — No Auth (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"No Auth Update\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Update Session — Wrong Owner (alt token, 404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 404 (ownership enforced)', () => pm.response.to.have.status(404));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{altAuthToken}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Hijack Attempt\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Delete Session",
+          "item": [
+            {
+              "name": "✅ Delete Session — Success (soft delete)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Soft delete confirmed', () => {",
+                      "  const json = pm.response.json();",
+                      "  pm.expect(json.success).to.be.true;",
+                      "  pm.expect(json.data.deleted).to.be.true;",
+                      "  pm.expect(json.data.session_id).to.equal(pm.collectionVariables.get('deleteSessionId'));",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{deleteSessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{deleteSessionId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Delete Session — Already Deleted (404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 404 (already soft-deleted)', () => pm.response.to.have.status(404));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{deleteSessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{deleteSessionId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Delete Session — No Auth (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Delete Session — Invalid UUID (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                      "pm.test('UUID format error', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/not-a-uuid",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "not-a-uuid"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "❌ Delete Session — Wrong Owner (alt token, 404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 404 (ownership enforced)', () => pm.response.to.have.status(404));",
+                      "pm.test('Error response', () => {",
+                      "  pm.expect(pm.response.json().success).to.be.false;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Authorization", "value": "Bearer {{altAuthToken}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/chat/sessions/{{sessionId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "chat", "sessions", "{{sessionId}}"]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+
+      ]
+    }
+
+  ]
+}
