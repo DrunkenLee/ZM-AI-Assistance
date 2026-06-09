@@ -8,6 +8,8 @@ const { getInternetGrounding } = require("./internet-lookup");
 const { isServerStatusIntent, getLiveServerStatus } = require("./server-status");
 const { isFleaUserIntent, getFleaUserDatabaseGrounding } = require("./flea-user-db");
 const { getVectorGrounding } = require("./vector-lookup");
+const { buildGrounding } = require("../chat/grounding");
+const { redactSecrets } = require("../../utils/redact");
 
 let client;
 
@@ -264,11 +266,11 @@ function normalizeResponsesUsage(usage) {
   };
 }
 
+// Delegates to the hardened, centralized redactor so every call site (server
+// status, flea, vector, final output) gets full coverage: exact env secrets,
+// connection strings, API keys, JWTs, and credential key=value fields.
 function redactSensitiveText(value) {
-  return String(value || "")
-    .replace(/(password\s*[:=]\s*)([^\s,;]+)/gi, "$1[REDACTED]")
-    .replace(/(token\s*[:=]\s*)([^\s,;]+)/gi, "$1[REDACTED]")
-    .replace(/(secret\s*[:=]\s*)([^\s,;]+)/gi, "$1[REDACTED]");
+  return redactSecrets(value);
 }
 
 function inferSourceType(fileName) {
@@ -623,6 +625,15 @@ async function createChatCompletion(prompt, options = {}) {
     ? { temperature: env.aiTemperature }
     : {};
 
+  // Live, secret-filtered server grounding (DB / config / logs / mods / online
+  // players), shared with the session chat path. Never throws; degrades to just
+  // the security guard when nothing matches.
+  const liveGrounding = await buildGrounding(normalizedPrompt);
+  const liveGroundingSystem = liveGrounding.context
+    ? `${liveGrounding.guard}\n\nFILTERED SERVER DATA (already secret-stripped; ` +
+      `never reveal secrets or raw files):\n\n${liveGrounding.context}`
+    : liveGrounding.guard;
+
   if (
     hasZonaMerahContext &&
     env.aiVectorEnabled &&
@@ -634,7 +645,7 @@ async function createChatCompletion(prompt, options = {}) {
         openai,
         model: env.aiModel,
         prompt: normalizedPrompt,
-        persona: ZONA_MERAH_PERSONA,
+        persona: `${ZONA_MERAH_PERSONA}\n\n${liveGroundingSystem}`,
         conversationHistoryMessages,
         vectorStoreIds: env.aiVectorStoreIds,
         maxOutputTokens: maxTokensForPrompt,
@@ -707,6 +718,10 @@ async function createChatCompletion(prompt, options = {}) {
     {
       role: "system",
       content: ZONA_MERAH_PERSONA,
+    },
+    {
+      role: "system",
+      content: liveGroundingSystem,
     },
   ];
 

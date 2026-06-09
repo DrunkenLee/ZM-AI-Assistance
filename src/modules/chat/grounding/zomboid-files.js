@@ -7,12 +7,17 @@
  *      and everything is passed through redactSecrets() as a final guarantee.
  */
 const fs = require("fs");
+const { execFile } = require("child_process");
 
 const { redactSecrets } = require("../../../utils/redact");
 
 const ZOMBOID_ROOT = "/home/pzserver/Zomboid";
 const SERVER_INI = `${ZOMBOID_ROOT}/Server/pzserver.ini`;
 const CONSOLE_LOG = `${ZOMBOID_ROOT}/server-console.txt`;
+
+// Steam Workshop content (the mods). Overridable via MODS_PATH.
+const MODS_PATH =
+  process.env.MODS_PATH || "/home/pzserver/serverfiles/steamapps/workshop/content/108600";
 
 // Config keys safe to surface. Anything not listed is silently dropped, so the
 // server/RCON/admin passwords and the Discord token can never be returned.
@@ -96,4 +101,58 @@ function getServerLogTail(maxLines = 40) {
   return redactSecrets(`Recent server console (last ${maxLines} lines, filtered):\n${tail}`);
 }
 
-module.exports = { getServerConfigSummary, getServerLogTail };
+function humanBytes(bytes) {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = Number(bytes) || 0;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(value >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+// du on multi-GB dirs is slow, so cache the result briefly.
+let modCache = { at: 0, text: null };
+const MOD_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function runDu() {
+  return new Promise((resolve) => {
+    // -s total, -b bytes. Timeout guards against a slow/huge tree.
+    execFile("du", ["-sb", MODS_PATH], { timeout: 20000 }, (err, stdout) => {
+      if (err) return resolve(null);
+      const bytes = Number(String(stdout).split(/\s+/)[0]);
+      resolve(Number.isFinite(bytes) ? bytes : null);
+    });
+  });
+}
+
+function countModEntries() {
+  try {
+    return fs.readdirSync(MODS_PATH, { withFileTypes: true }).filter((d) => d.isDirectory()).length;
+  } catch {
+    return null;
+  }
+}
+
+/** Total on-disk size of the installed Workshop mods (cached, redacted). */
+async function getModStorageSummary() {
+  const now = Date.now();
+  if (modCache.text && now - modCache.at < MOD_CACHE_TTL_MS) return modCache.text;
+
+  const bytes = await runDu();
+  if (bytes == null) return null;
+
+  const count = countModEntries();
+  const lines = [
+    "Mods storage (Steam Workshop content, filtered):",
+    `total size = ${humanBytes(bytes)}`,
+    count != null ? `workshop items = ${count}` : null,
+  ].filter(Boolean);
+
+  const text = redactSecrets(lines.join("\n"));
+  modCache = { at: now, text };
+  return text;
+}
+
+module.exports = { getServerConfigSummary, getServerLogTail, getModStorageSummary };

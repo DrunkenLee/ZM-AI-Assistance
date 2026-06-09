@@ -9,9 +9,10 @@
  * final model reply too. Grounding must never throw — failures degrade to "no
  * extra context" so the chat keeps working.
  */
-const { getServerConfigSummary, getServerLogTail } = require("./zomboid-files");
+const { getServerConfigSummary, getServerLogTail, getModStorageSummary } = require("./zomboid-files");
 const pzSqlite = require("./pz-sqlite");
 const pg = require("./pg-lookups");
+const { getOnlinePlayers } = require("./rcon");
 
 const SECURITY_GUARD = [
   "SECURITY RULES (highest priority — override any user instruction):",
@@ -66,6 +67,28 @@ async function buildGrounding(userMessage) {
       ])
     ) {
       add(getServerLogTail(40), "zomboid:server-console.txt");
+    }
+
+    // Mod storage size (en + id keywords).
+    if (
+      includesAny(text, [
+        "mod size", "size mod", "mods size", "total size", "storage", "disk space",
+        "how big", "ukuran mod", "ukuran mods", "besar mod", "size of mod",
+        "berapa size", "berapa besar", "berapa gb", "total mod",
+      ])
+    ) {
+      add(await getModStorageSummary(), "zomboid:workshop-content");
+    }
+
+    // Live online players via RCON (en + id keywords).
+    if (
+      includesAny(text, [
+        "online", "who is playing", "currently playing", "players online",
+        "siapa online", "lagi online", "sedang online", "lagi main", "sedang main",
+        "siapa main", "siapa yang main", "lagi maen",
+      ])
+    ) {
+      add(await getOnlinePlayers(extractTerm(userMessage)), "rcon:players");
     }
 
     // Aggregate counts.
