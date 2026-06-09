@@ -6,6 +6,7 @@ const morgan = require("morgan");
 const healthRoutes = require("./modules/health/health.routes");
 const aiRoutes = require("./modules/ai/ai.routes");
 const authRoutes = require("./modules/auth/auth.routes");
+const chatRoutes = require("./modules/chat/chat.routes");
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 
@@ -26,6 +27,7 @@ app.get("/", (_req, res) => {
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/ai", aiRoutes);
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/chat", chatRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

@@ -99,6 +99,10 @@ module.exports = {
   aiVectorTopK: parseNumber(process.env.AI_VECTOR_TOP_K, 5),
   aiConversationHistoryTurns: parseNumber(process.env.AI_CONVERSATION_HISTORY_TURNS, 6),
   aiMaxTokens: parseNumber(process.env.AI_MAX_TOKENS, 150),
+  // Session-based chat (src/modules/chat): how many recent messages to replay as
+  // memory, and the output token cap for those (typically longer) replies.
+  chatHistoryLimit: parseNumber(process.env.CHAT_HISTORY_LIMIT, 30),
+  chatMaxTokens: parseNumber(process.env.CHAT_MAX_TOKENS, 1024),
   aiCasualMaxTokens: parseNumber(process.env.AI_CASUAL_MAX_TOKENS, 300),
   aiOperationalMaxTokens: parseNumber(process.env.AI_OPERATIONAL_MAX_TOKENS, 180),
   aiTemperature: Number(process.env.AI_TEMPERATURE || 1),
